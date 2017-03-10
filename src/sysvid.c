@@ -222,8 +222,8 @@ sysvid_init(void)
 
 #ifdef _3DS
    videoFlags = SDL_HWSURFACE|SDL_FULLSCREEN|SDL_CONSOLEBOTTOM;
-    szoom = zoom;
-    zoom = fszoom;
+   szoom = zoom;
+   zoom = fszoom;
 #else
   /* video modes and screen */
   videoFlags = SDL_HWSURFACE|SDL_HWPALETTE;

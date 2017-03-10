@@ -99,7 +99,9 @@ sys_sleep(int s)
 void
 sys_init(int argc, char **argv)
 {
+#ifndef _3DS
 	sysarg_init(argc, argv);
+#endif
 	sysvid_init();
 #ifdef ENABLE_JOYSTICK
 	sysjoy_init();

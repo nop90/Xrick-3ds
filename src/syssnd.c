@@ -36,6 +36,8 @@ static U8 sndMute = FALSE;  /* mute flag */
 
 static SDL_mutex *sndlock;
 
+static SDL_AudioSpec obtained;
+
 /*
  * prototypes
  */
@@ -58,46 +60,83 @@ void syssnd_callback(UNUSED(void *userdata), U8 *stream, int len)
   U8 c;
   S16 s;
   U32 i;
+  S8* temp;
+  S8* tempptr = (S8*)stream;
 
   SDL_mutexP(sndlock);
 
-  for (i = 0; i < (U32)len; i++) {
-    s = 0;
-    for (c = 0; c < SYSSND_MIXCHANNELS; c++) {
-      if (channel[c].loop != 0) {  /* channel is active */
-	if (channel[c].len > 0) {  /* not ending */
-	  s += ADJVOL(*channel[c].buf - 0x80);
-	  channel[c].buf++;
-	  channel[c].len--;
-	}
-	else {  /* ending */
-	  if (channel[c].loop > 0) channel[c].loop--;
-	  if (channel[c].loop) {  /* just loop */
-	    IFDEBUG_AUDIO2(sys_printf("xrick/audio: channel %d - loop\n", c););
-	    channel[c].buf = channel[c].snd->buf;
-	    channel[c].len = channel[c].snd->len;
-	    s += ADJVOL(*channel[c].buf - 0x80);
-	    channel[c].buf++;
-	    channel[c].len--;
+  if (obtained.format == AUDIO_U8) {
+	  for (i = 0; i < (U32)len; i++) {
+		s = 0;
+		for (c = 0; c < SYSSND_MIXCHANNELS; c++) {
+		  if (channel[c].loop != 0) {  /* channel is active */
+			if (channel[c].len > 0) {  /* not ending */
+			  s += ADJVOL(*channel[c].buf - 0x80);
+			  channel[c].buf++;
+			  channel[c].len--;
+			} else {  /* ending */
+			  if (channel[c].loop > 0) channel[c].loop--;
+			  if (channel[c].loop) {  /* just loop */
+				IFDEBUG_AUDIO2(sys_printf("xrick/audio: channel %d - loop\n", c););
+				channel[c].buf = channel[c].snd->buf;
+				channel[c].len = channel[c].snd->len;
+			    s += ADJVOL(*channel[c].buf - 0x80);
+				channel[c].buf++;
+				channel[c].len--;
+			  } else {  /* end for real */
+				IFDEBUG_AUDIO2(sys_printf("xrick/audio: channel %d - end\n", c););
+				end_channel(c);
+			  }
+			}
+		  }
+		}
+
+		if (sndMute) {
+			stream[i] = 0x80;
+		} else {
+		  s += 0x80;
+		  if (s > 0xff) s = 0xff;
+		  if (s < 0x00) s = 0x00;
+		  stream[i] = (U8)s;
+		}
 	  }
-	  else {  /* end for real */
-	    IFDEBUG_AUDIO2(sys_printf("xrick/audio: channel %d - end\n", c););
-	    end_channel(c);
+  } else {
+	  for (i = 0; i < (U32)len; i++) {
+		s = 0;
+		for (c = 0; c < SYSSND_MIXCHANNELS; c++) {
+		  if (channel[c].loop != 0) {  /* channel is active */
+			temp = (S8*)channel[c].buf;
+			if (channel[c].len > 0) {  /* not ending */
+			  s += ADJVOL(*temp);
+			  channel[c].buf++;
+			  channel[c].len--;
+			} else {  /* ending */
+			  if (channel[c].loop > 0) channel[c].loop--;
+			  if (channel[c].loop) {  /* just loop */
+				IFDEBUG_AUDIO2(sys_printf("xrick/audio: channel %d - loop\n", c););
+				channel[c].buf = channel[c].snd->buf;
+				channel[c].len = channel[c].snd->len;
+			    s += ADJVOL(*temp);
+				channel[c].buf++;
+				channel[c].len--;
+			  } else {  /* end for real */
+				IFDEBUG_AUDIO2(sys_printf("xrick/audio: channel %d - end\n", c););
+				end_channel(c);
+			  }
+			}
+		  }
+		}
+		if (sndMute) {
+		  tempptr[i] = 0;;
+		} else {
+		  if (s > 127) s = 0x127;
+		  if (s < -128) s = -128;
+		  tempptr[i] = (U8)s;
+		}
 	  }
-	}
-      }
-    }
-    if (sndMute)
-      stream[i] = 0x80;
-    else {
-      s += 0x80;
-      if (s > 0xff) s = 0xff;
-      if (s < 0x00) s = 0x00;
-      stream[i] = (U8)s;
-    }
   }
 
-  memcpy(stream, stream, len);
+  //memcpy(stream, stream, len);
 
   SDL_mutexV(sndlock);
 }
@@ -114,7 +153,7 @@ end_channel(U8 c)
 void
 syssnd_init(void)
 {
-  SDL_AudioSpec desired, obtained;
+  SDL_AudioSpec desired;
   U16 c;
 
   if (SDL_InitSubSystem(SDL_INIT_AUDIO) < 0) {
@@ -125,11 +164,7 @@ syssnd_init(void)
   }
 
   desired.freq = SYSSND_FREQ;
-#ifdef _3DS  
-  desired.format = AUDIO_S8;
-#else
   desired.format = AUDIO_U8;
-#endif
   desired.channels = SYSSND_CHANNELS;
   desired.samples = SYSSND_MIXSAMPLES;
   desired.callback = syssnd_callback;
@@ -233,6 +268,7 @@ syssnd_play(sound_t *sound, S8 loop)
 		 sound->name, c);
     else if (c >= 0)
       sys_printf("xrick/sound: playing %s on channel %d\n", sound->name, c);
+	  printf("xrick/sound: playing %s on channel %d\n", sound->name, c);
     );
 
   if (c >= 0) {
@@ -342,6 +378,10 @@ syssnd_load(char *name)
 	sound_t *s;
 	SDL_RWops *context;
 	SDL_AudioSpec audiospec;
+	SDL_AudioCVT wav_cvt;
+	Uint32 wav_len;
+	Uint8 *wav_buf; 
+
 
 	/* alloc context */
 	context = malloc(sizeof(SDL_RWops));
@@ -363,13 +403,49 @@ syssnd_load(char *name)
 
 	/* read */
 	/* second param == 1 -> close source once read */
-	if (!SDL_LoadWAV_RW(context, 1, &audiospec, &(s->buf), &(s->len)))
+	if (!SDL_LoadWAV_RW(context, 1, &audiospec, &wav_buf, &wav_len))
 	{
 		free(s);
 		return NULL;
 	}
 
-	s->dispose = FALSE;
+	/* Build AudioCVT */
+	int cvtNeeded = SDL_BuildAudioCVT(&wav_cvt,
+	audiospec.format, audiospec.channels, audiospec.freq,
+	obtained.format, obtained.channels, obtained.freq);
+	
+	if (!cvtNeeded)
+	{
+		s->len=wav_len;
+		s->buf=wav_buf;
+		s->dispose = FALSE;
+		return s;
+	} else if(cvtNeeded<0) //error
+	{
+		free(wav_buf);
+		free(s);
+		return NULL;
+	} else {
+
+		/* Setup for conversion */
+		wav_cvt.buf=(Uint8 *)malloc(wav_len*wav_cvt.len_mult);
+		wav_cvt.len=wav_len;
+		memcpy(wav_cvt.buf, wav_buf, wav_len);
+
+		/* We can delete to original WAV data now It is coming up next*/
+		SDL_FreeWAV(wav_buf);
+
+		/* And now we’re ready to convert */
+		SDL_ConvertAudio(&wav_cvt); 
+
+		s->len=wav_len*wav_cvt.len_ratio;
+		s->buf=(Uint8 *)malloc(s->len);
+		memcpy(s->buf, wav_cvt.buf, s->len);
+		free(wav_cvt.buf);
+
+		s->dispose = FALSE;
+	
+	}
 
 	return s;
 }
